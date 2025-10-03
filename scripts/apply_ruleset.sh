@@ -121,29 +121,50 @@ fi
 
 PAYLOAD=$(cat <<EOF
 {
-  "name":"protect-main",
-  "target":"branch",
-  "enforcement":"active",
+  "name": "protect-main",
+  "target": "branch",
+  "enforcement": "active",
   "conditions": {
     "ref_name": { "include": ["refs/heads/main"] }
   },
   "bypass_actors": [],
   "rules": [
-    { "type": "pull_request_required", "parameters": {} },
-    { "type": "required_status_checks", "parameters": { "checks": ${CHECKS_JSON}, "strict": true } },
     {
-      "type": "require_approving_review_count",
+      "type": "pull_request_reviews",
+      "parameters": {
+        "required_approving_review_count": 0
+      }
+    },
+    {
+      "type": "required_status_checks",
+      "parameters": {
+        "contexts": ["Build · Unit tests · Lint"],
+        "strict": true
+      }
+    },
+    {
+      "type": "required_approving_review_count",
       "parameters": {
         "count": 1,
         "dismiss_stale_reviews": true,
         "require_code_owner_reviews": true
       }
     },
-    { "type": "enforce_admins", "parameters": { "enabled": true } },
-    { "type": "block_force_pushes", "parameters": { "enabled": true } },
-    { "type": "prevent_deletions", "parameters": { "enabled": true } }
+    {
+      "type": "enforce_admins",
+      "parameters": { "enabled": true }
+    },
+    {
+      "type": "block_force_pushes",
+      "parameters": { "enabled": true }
+    },
+    {
+      "type": "prevent_deletions",
+      "parameters": { "enabled": true }
+    }
   ]
 }
+
 EOF
 )
 
