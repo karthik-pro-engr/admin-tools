@@ -130,7 +130,7 @@ PAYLOAD=$(cat <<EOF
   "bypass_actors": [],
   "rules": [
     {
-      "type": "pull_request_reviews",
+      "type": "required_pull_request_reviews",
       "parameters": {
         "required_approving_review_count": 1,
         "dismiss_stale_reviews": true,
@@ -144,11 +144,12 @@ PAYLOAD=$(cat <<EOF
         "strict": true
       }
     },
-    { "type": "enforce_admins",       "parameters": {} },
-    { "type": "block_force_pushes",   "parameters": {} },
-    { "type": "prevent_deletions",    "parameters": {} }
+    { "type": "enforce_admins",         "parameters": {} },
+    { "type": "disable_force_pushes",    "parameters": {} },
+    { "type": "disable_deletions",       "parameters": {} }
   ]
 }
+
 
 EOF
 )
