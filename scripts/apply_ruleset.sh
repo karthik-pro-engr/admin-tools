@@ -132,7 +132,9 @@ PAYLOAD=$(cat <<EOF
     {
       "type": "pull_request_reviews",
       "parameters": {
-        "required_approving_review_count": 0
+        "required_approving_review_count": 1,
+        "dismiss_stale_reviews": true,
+        "require_code_owner_reviews": true
       }
     },
     {
@@ -142,26 +144,9 @@ PAYLOAD=$(cat <<EOF
         "strict": true
       }
     },
-    {
-      "type": "required_approving_review_count",
-      "parameters": {
-        "count": 1,
-        "dismiss_stale_reviews": true,
-        "require_code_owner_reviews": true
-      }
-    },
-    {
-      "type": "enforce_admins",
-      "parameters": { "enabled": true }
-    },
-    {
-      "type": "block_force_pushes",
-      "parameters": { "enabled": true }
-    },
-    {
-      "type": "prevent_deletions",
-      "parameters": { "enabled": true }
-    }
+    { "type": "enforce_admins",       "parameters": {} },
+    { "type": "block_force_pushes",   "parameters": {} },
+    { "type": "prevent_deletions",    "parameters": {} }
   ]
 }
 
