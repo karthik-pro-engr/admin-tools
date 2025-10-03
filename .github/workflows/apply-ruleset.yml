@@ -1,17 +1,17 @@
-name: Apply Branch RuleSet (Admin)
+name: Apply Branch Ruleset (Admin)
 
 on:
   workflow_dispatch:
     inputs:
       owner:
+        description: 'Repository owner (username/org)'
         required: true
-        description: 'Repository owner or org'
       repo:
-        required: true
         description: 'Repository name'
+        required: true
       status_check:
+        description: 'Exact PR status check name (optional)'
         required: false
-        description: 'Exact status check name, e.g. "Android CI / Build · Unit tests · Lint"'
 
 permissions:
   contents: read
@@ -24,9 +24,13 @@ jobs:
       - name: Checkout admin repo
         uses: actions/checkout@v4
 
+      - name: Ensure script is present
+        run: |
+          ls -la scripts || true
+          chmod +x ./scripts/apply_ruleset.sh
+
       - name: Run apply_ruleset script
         env:
-          GITHUB_TOKEN: ${{ secrets.ADMIN_PAT }}
+          GITHUB_TOKEN: ${{ secrets.ADMIN_PAT }}   # ensure this secret exists in the admin repo
         run: |
-          chmod +x ./scripts/apply_ruleset.sh
           ./scripts/apply_ruleset.sh "${{ github.event.inputs.owner }}" "${{ github.event.inputs.repo }}" "${{ github.event.inputs.status_check }}"
