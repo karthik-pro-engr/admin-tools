@@ -62,46 +62,44 @@ fi
 # Build canonical payload that satisfies the Rulesets API required fields.
 # Note: the pull_request.parameters object must include all required keys per docs.
 PAYLOAD=$(cat <<EOF
-{
-  "name": "protect-main",
-  "target": "branch",
-  "enforcement": "active",
-  "conditions": {
-    "ref_name": { "include": ["refs/heads/main"] }
+"rules": [
+  {
+    "type": "pull_request",
+    "parameters": {
+      "dismiss_stale_reviews_on_push": true,
+      "require_code_owner_review": true,
+      "required_approving_review_count": 1,
+      "require_last_push_approval": false,            // added
+      "required_review_thread_resolution": false      // added
+    }
   },
-  "bypass_actors": [],
-  "rules": [
-    {
-      "type": "pull_request",
-      "parameters": {
-        "allowed_merge_methods": ["merge", "squash", "rebase"],
-        "automatic_copilot_code_review_enabled": false,
-        "dismiss_stale_reviews_on_push": true,
-        "require_code_owner_review": true,
-        "require_last_push_approval": false,
-        "required_approving_review_count": 1,
-        "required_review_thread_resolution": false,
-        "required_status_checks": {
-          "do_not_enforce_on_create": false,
-          "required_status_checks": [],
-          "strict_required_status_checks_policy": false
+  {
+    "type": "required_status_checks",
+    "parameters": {
+      "strict_required_status_checks_policy": true,
+      "required_status_checks": [
+        { "context": "Build · Unit tests · Lint" }
+      ]
+    }
+  },
+  {
+    "type": "non_fast_forward",
+    "parameters": {
+      "commit_message_pattern": {                    // added required object
+        "type": "commit_message_pattern",
+        "parameters": {
+          "operator": "contains",
+          "pattern": ""
         }
       }
-    },
-    {
-      "type": "required_status_checks",
-      "parameters": {
-        "do_not_enforce_on_create": false,
-        "required_status_checks": [
-          $( [ -n "$STATUS_CHECK_JSON" ] && printf '%s' "${STATUS_CHECK_JSON}" || printf '' )
-        ],
-        "strict_required_status_checks_policy": true
-      }
-    },
-    { "type": "non_fast_forward", "parameters": {} },
-    { "type": "deletion", "parameters": {} }
-  ]
-}
+    }
+  },
+  {
+    "type": "deletion",
+    "parameters": {}
+  }
+]
+
 EOF
 )
 
