@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # scripts/apply_ruleset.sh
-# Debuggable ruleset creation script for admin-tools
+# Create a repository ruleset (protect-main) using GitHub Rulesets API.
+# Debug-friendly: prints timestamps, HTTP status, and API response (never prints tokens).
 #
 # Usage:
-#   export GITHUB_TOKEN="ghp_xxx"   # OR ensure `gh auth login` has admin rights
+#   export GITHUB_TOKEN="ghp_xxx"   # preferred (fine-grained PAT with repo admin)
 #   ./apply_ruleset.sh <owner> <repo> "<status_check_name>"
 #
 # Example:
@@ -14,7 +15,6 @@ set -euo pipefail
 LOG_PREFIX="[apply_ruleset]"
 timestamp() { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
 log() { printf "%s %s %s\n" "$(timestamp)" "${LOG_PREFIX}" "$*"; }
-
 section() { log "---- $* ----"; }
 
 usage() {
@@ -33,18 +33,13 @@ has_cmd() { command -v "$1" >/dev/null 2>&1; }
 
 section "Start"
 log "Script invoked. PID $$"
-if ! has_cmd curl; then
-  log "ERROR: curl not found in PATH. Install curl."
-  exit 10
-fi
-if ! has_cmd jq; then
-  log "ERROR: jq not found in PATH. Install jq (used for pretty JSON output)."
-  exit 11
-fi
-if ! has_cmd date; then
-  log "ERROR: date not found in PATH."
-  exit 12
-fi
+
+for cmd in curl jq date; do
+  if ! has_cmd "$cmd"; then
+    log "ERROR: required command '$cmd' not found. Install it."
+    exit 10
+  fi
+done
 
 OWNER="${1-}"
 REPO="${2-}"
@@ -76,7 +71,7 @@ log "Repo: ${REPO}"
 if [ -n "$STATUS_CHECK_NAME" ]; then
   log "Status check name provided: '${STATUS_CHECK_NAME}'"
 else
-  log "Status check name: (none) — ruleset will be created with empty required checks"
+  log "Status check name: (none) — ruleset will be created with no required checks"
 fi
 
 section "Auth checks"
@@ -93,7 +88,7 @@ if [ -n "${GITHUB_TOKEN-}" ]; then
   else
     log "WARNING: token test failed (status ${HTTP_USER_STATUS}). Response body:"
     cat /tmp/_gh_user_resp || true
-    log "If you're running in Actions, ensure the secret was set and mapped into env (e.g., GITHUB_TOKEN: \${{ secrets.ADMIN_PAT }}) and that token owner has admin rights to target repo."
+    log "If running in Actions, ensure the secret was mapped into env (e.g., GITHUB_TOKEN: \${{ secrets.ADMIN_PAT }}) and token owner has admin rights on target repo."
   fi
   rm -f /tmp/_gh_user_resp || true
 else
@@ -112,14 +107,17 @@ else
   fi
 fi
 
-section "Build ruleset payload"
-CHECKS_JSON="[]"
+section "Build ruleset payload (Rulesets API schema)"
+
+# Build required_status_checks fragment if a status check name is provided
+REQUIRED_STATUS_CHECKS_JSON='[]'
 if [ -n "$STATUS_CHECK_NAME" ]; then
   esc=$(printf '%s' "$STATUS_CHECK_NAME" | sed 's/"/\\"/g')
-  CHECKS_JSON="[ { \"name\": \"${esc}\" } ]"
+  REQUIRED_STATUS_CHECKS_JSON="[ { \"context\": \"${esc}\" } ]"
 fi
 
-PAYLOAD=$(cat <<EOF
+# Create final payload using the Rulesets API expected schema
+read -r -d '' PAYLOAD <<EOF
 {
   "name": "protect-main",
   "target": "branch",
@@ -154,10 +152,7 @@ PAYLOAD=$(cat <<EOF
     }
   ]
 }
-
-
 EOF
-)
 
 log "Payload to be sent (pretty-printed):"
 printf "%s\n" "${PAYLOAD}" | jq .
@@ -219,6 +214,7 @@ case "${HTTP_STATUS}" in
     ;;
   422)
     log "ERROR 422: Validation failed. The payload may be invalid or a ruleset with the same name/target already exists with incompatible settings."
+    log "Full API response printed above — inspect the 'errors' or 'message' fields for the exact cause."
     ;;
   *)
     log "ERROR ${HTTP_STATUS}: Unexpected response. Inspect the response JSON above for details."
