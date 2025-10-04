@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # scripts/apply_ruleset.sh
-# Create a repository ruleset (protect-main) using GitHub Rulesets API.
-# Debug-friendly: prints timestamps, HTTP status, and API response (never prints tokens).
+# Robust, debuggable ruleset creation/upsert script for admin-tools
 #
 # Usage:
 #   export GITHUB_TOKEN="ghp_xxx"   # preferred (fine-grained PAT with repo admin)
@@ -11,28 +10,43 @@
 #   ./apply_ruleset.sh karthik-pro-engr architecting-state "Build · Unit tests · Lint"
 
 set -euo pipefail
+set -o errtrace
 
 LOG_PREFIX="[apply_ruleset]"
-timestamp() { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
-log() { printf "%s %s %s\n" "$(timestamp)" "${LOG_PREFIX}" "$*"; }
-section() { log "---- $* ----"; }
+timestamp(){ date -u +"%Y-%m-%dT%H:%M:%SZ"; }
+log(){ printf "%s %s %s\n" "$(timestamp)" "${LOG_PREFIX}" "$*"; }
 
-usage() {
-  cat <<EOF
-Usage:
-  GITHUB_TOKEN must be set in env (preferred) OR gh must be authenticated.
-  ./apply_ruleset.sh <owner> <repo> "<status_check_name>"
-
-Examples:
-  ./apply_ruleset.sh karthik-pro-engr architecting-state "Build · Unit tests · Lint"
-EOF
-  exit 2
+# Error handler prints helpful debug info (no secrets)
+on_error(){
+  local exit_code=$?
+  # BASH_COMMAND is the last executed command, LINENO is line of trap definition; we want the line from caller
+  local last_cmd="${BASH_COMMAND:-unknown}"
+  # Try to get line number via caller
+  local caller_info
+  caller_info=$(caller 0 2>/dev/null || true)
+  log "ERROR: script failed with exit code ${exit_code}"
+  log "ERROR: last command: ${last_cmd}"
+  if [ -n "${caller_info}" ]; then
+    log "ERROR: caller info: ${caller_info}"
+  fi
+  log "Dumping environment summary (sensitive values suppressed):"
+  # Show a few env vars but avoid printing tokens
+  env | grep -E '^(USER=|HOME=|GITHUB_ACTIONS=|GITHUB_RUN_ID=|GITHUB_REPOSITORY=)' || true
+  log "Exiting with ${exit_code}."
+  exit "${exit_code}"
 }
+trap 'on_error' ERR
 
-has_cmd() { command -v "$1" >/dev/null 2>&1; }
+# ensure cleanup of temp files
+TMP_FILES=()
+cleanup() {
+  for f in "${TMP_FILES[@]:-}"; do
+    [ -f "$f" ] && rm -f "$f" || true
+  done
+}
+trap cleanup EXIT
 
-section "Start"
-log "Script invoked. PID $$"
+has_cmd(){ command -v "$1" >/dev/null 2>&1; }
 
 for cmd in curl jq date; do
   if ! has_cmd "$cmd"; then
@@ -43,14 +57,26 @@ done
 
 OWNER="${1-}"
 REPO="${2-}"
-STATUS_CHECK_NAME="${3-}"
+STATUS_CHECK_NAME="${3-:-}"
 
 if [ -z "$OWNER" ] || [ -z "$REPO" ]; then
-  log "ERROR: Missing required arguments."
-  usage
+  log "ERROR: Missing arguments."
+  printf "Usage: %s <owner> <repo> \"<status_check_name>\"\n" "$(basename "$0")"
+  exit 2
 fi
 
-section "Environment summary"
+section(){ log "---- $* ----"; }
+
+section "Start"
+log "PID $$"
+log "Owner: ${OWNER}"
+log "Repo: ${REPO}"
+if [ -n "$STATUS_CHECK_NAME" ]; then
+  log "Status check: '${STATUS_CHECK_NAME}'"
+else
+  log "Status check: (none)"
+fi
+
 if [ -n "${GITHUB_TOKEN-}" ]; then
   log "GITHUB_TOKEN: present (value suppressed)"
 else
@@ -58,66 +84,22 @@ else
 fi
 
 if has_cmd gh; then
-  GH_VERSION=$(gh --version | head -n1 || true)
-  log "gh CLI: available - ${GH_VERSION}"
+  log "gh CLI: $(gh --version | head -n1 || true)"
 else
   log "gh CLI: not available"
 fi
 
-log "curl: $(curl --version | head -n1 | tr -s ' ' ' ' )"
-log "jq: $(jq --version 2>/dev/null || true)"
-log "Owner: ${OWNER}"
-log "Repo: ${REPO}"
-if [ -n "$STATUS_CHECK_NAME" ]; then
-  log "Status check name provided: '${STATUS_CHECK_NAME}'"
-else
-  log "Status check name: (none) — ruleset will be created with no required checks"
-fi
-
-section "Auth checks"
-if [ -n "${GITHUB_TOKEN-}" ]; then
-  log "Testing token: calling GET /user (token will not be printed)"
-  HTTP_USER_STATUS=$(curl -s -o /tmp/_gh_user_resp -w "%{http_code}" \
-    -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-    -H "Accept: application/vnd.github+json" \
-    https://api.github.com/user || true)
-  log "GET /user HTTP status: ${HTTP_USER_STATUS}"
-  if [ "${HTTP_USER_STATUS}" -ge 200 ] && [ "${HTTP_USER_STATUS}" -lt 300 ]; then
-    log "Token test succeeded. Authenticated as:"
-    jq -r '{login: .login, id: .id, name: .name} | @json' /tmp/_gh_user_resp 2>/dev/null || cat /tmp/_gh_user_resp
-  else
-    log "WARNING: token test failed (status ${HTTP_USER_STATUS}). Response body:"
-    cat /tmp/_gh_user_resp || true
-    log "If running in Actions, ensure the secret was mapped into env (e.g., GITHUB_TOKEN: \${{ secrets.ADMIN_PAT }}) and token owner has admin rights on target repo."
-  fi
-  rm -f /tmp/_gh_user_resp || true
-else
-  log "No GITHUB_TOKEN set — will attempt to use 'gh' CLI if authenticated."
-  if has_cmd gh; then
-    if gh auth status >/dev/null 2>&1; then
-      log "gh is authenticated; will use gh api fallback."
-      gh auth status || true
-    else
-      log "ERROR: gh is not authenticated. Run 'gh auth login' or set GITHUB_TOKEN."
-      exit 3
-    fi
-  else
-    log "ERROR: Neither GITHUB_TOKEN nor gh auth available. Cannot proceed."
-    exit 4
-  fi
-fi
-
-section "Build ruleset payload (Rulesets API schema)"
-
-# Build required_status_checks fragment if a status check name is provided
-REQUIRED_STATUS_CHECKS_JSON='[]'
+section "Build payload"
+# Escape status check safely
 if [ -n "$STATUS_CHECK_NAME" ]; then
   esc=$(printf '%s' "$STATUS_CHECK_NAME" | sed 's/"/\\"/g')
-  REQUIRED_STATUS_CHECKS_JSON="[ { \"context\": \"${esc}\" } ]"
+  req_checks_json="[ { \"context\": \"${esc}\" } ]"
+else
+  req_checks_json="[]"
 fi
 
-# Create final payload using the Rulesets API expected schema
-read -r -d '' PAYLOAD <<EOF
+# Canonical payload expected by Rulesets API
+read -r -d '' PAYLOAD <<'PAYLOAD_EOF'
 {
   "name": "protect-main",
   "target": "branch",
@@ -139,7 +121,7 @@ read -r -d '' PAYLOAD <<EOF
       "type": "required_status_checks",
       "parameters": {
         "strict_required_status_checks_policy": true,
-        "required_status_checks": ${REQUIRED_STATUS_CHECKS_JSON}
+        "required_status_checks": REPLACE_REQUIRED_CHECKS
       }
     },
     {
@@ -152,75 +134,120 @@ read -r -d '' PAYLOAD <<EOF
     }
   ]
 }
-EOF
+PAYLOAD_EOF
 
-log "Payload to be sent (pretty-printed):"
-printf "%s\n" "${PAYLOAD}" | jq .
+# Insert required_status_checks array
+PAYLOAD="${PAYLOAD//REPLACE_REQUIRED_CHECKS/${req_checks_json}}"
+
+log "Payload (raw):"
+printf "%s\n" "$PAYLOAD"
+
+# Try pretty print but don't fail if jq has trouble
+if printf "%s\n" "$PAYLOAD" | jq . >/dev/null 2>&1; then
+  log "Payload (pretty):"
+  printf "%s\n" "$PAYLOAD" | jq .
+else
+  log "Payload not valid JSON for pretty-print (will still send raw payload)."
+fi
 
 API_URL="https://api.github.com/repos/${OWNER}/${REPO}/rulesets"
-section "Calling GitHub API to create ruleset"
-log "API endpoint: ${API_URL}"
+section "POST ruleset (primary attempt)"
+log "API URL: ${API_URL}"
 
-TMP_RESP="$(mktemp)"
-if [ -n "${GITHUB_TOKEN-}" ]; then
-  log "Using GITHUB_TOKEN for API request (value suppressed)."
-  HTTP_STATUS=$(curl -sS -w "%{http_code}" -o "${TMP_RESP}" \
+# helpers for API calls (curl) - will capture response and status
+post_with_curl() {
+  local payload="$1"
+  local resp
+  local status
+  local respfile
+  respfile=$(mktemp)
+  TMP_FILES+=("$respfile")
+  # Use --fail? no, we capture status ourselves
+  status=$(curl -sS -w "%{http_code}" -o "${respfile}" \
     -X POST "${API_URL}" \
-    -H "Authorization: Bearer ${GITHUB_TOKEN}" \
     -H "Accept: application/vnd.github+json" \
     -H "X-GitHub-Api-Version: 2022-11-28" \
-    --data-binary "${PAYLOAD}" || true)
-else
-  log "Using gh api fallback (gh must be authenticated and authorized)."
-  TMP_PAYLOAD="$(mktemp)"
-  printf "%s" "${PAYLOAD}" > "${TMP_PAYLOAD}"
-  if gh api "${API_URL}" -X POST -f @"${TMP_PAYLOAD}" > "${TMP_RESP}" 2>/tmp/gh_err; then
-    HTTP_STATUS=200
+    -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+    --data-binary "${payload}" || true)
+  echo "${status}|${respfile}"
+}
+
+post_with_gh() {
+  local payload="$1"
+  local respfile
+  respfile=$(mktemp)
+  TMP_FILES+=("$respfile")
+  printf "%s" "${payload}" > /tmp/_payload.json
+  TMP_FILES+=("/tmp/_payload.json")
+  if gh api "repos/${OWNER}/${REPO}/rulesets" -X POST -f /tmp/_payload.json > "${respfile}" 2>/tmp/_gh_err; then
+    echo "201|${respfile}"
   else
-    HTTP_STATUS=$(cat /tmp/gh_err | sed -n '1p' | sed -n '1,1p' || echo "0")
+    # capture gh err output
+    cat /tmp/_gh_err > "${respfile}" 2>/dev/null || true
+    TMP_FILES+=("/tmp/_gh_err")
+    echo "0|${respfile}"
   fi
-  rm -f "${TMP_PAYLOAD}" /tmp/gh_err || true
-fi
+}
 
-log "API HTTP status: ${HTTP_STATUS}"
-log "Response body (raw):"
-cat "${TMP_RESP}" || true
-
-if jq -e . >/dev/null 2>&1 < "${TMP_RESP}"; then
-  log "Response body (pretty JSON):"
-  jq . "${TMP_RESP}" || true
+# Choose transport
+if [ -n "${GITHUB_TOKEN-}" ]; then
+  call_result=$(post_with_curl "$PAYLOAD")
 else
-  log "Response not valid JSON or empty. See raw above."
+  if has_cmd gh; then
+    call_result=$(post_with_gh "$PAYLOAD")
+  else
+    log "ERROR: No GITHUB_TOKEN and no gh available; cannot call API."
+    exit 3
+  fi
 fi
 
-if [ "${HTTP_STATUS}" -ge 200 ] && [ "${HTTP_STATUS}" -lt 300 ]; then
-  log "SUCCESS: ruleset created or updated."
-  rm -f "${TMP_RESP}"
+HTTP_STATUS=${call_result%%|*}
+RESP_FILE=${call_result#*|}
+
+log "HTTP status: ${HTTP_STATUS}"
+log "Response (raw):"
+[ -f "${RESP_FILE}" ] && sed -n '1,200p' "${RESP_FILE}" || true
+
+# Pretty print response when JSON
+if [ -f "${RESP_FILE}" ] && jq -e . >/dev/null 2>&1 < "${RESP_FILE}"; then
+  log "Response (pretty):"
+  jq . "${RESP_FILE}" || true
+fi
+
+# If success
+if [[ "${HTTP_STATUS}" =~ ^2[0-9]{2}$ ]]; then
+  log "SUCCESS: ruleset created/updated (status ${HTTP_STATUS})."
   exit 0
 fi
 
-case "${HTTP_STATUS}" in
-  401)
-    log "ERROR 401: Unauthorized. Token invalid or revoked. Confirm PAT is correct and not expired."
-    ;;
-  403)
-    log "ERROR 403: Forbidden. Token may lack required scopes or token owner may not have admin rights on target repo."
-    log "Ensure token has 'Repository administration: read & write' (fine-grained) or 'repo' (classic) and the token owner is a repo admin."
-    ;;
-  404)
-    log "ERROR 404: Not Found. Possible causes:"
-    log " - The repository owner/repo is misspelled."
-    log " - The token does not have access to the repository (fine-grained tokens must include this repo)."
-    ;;
-  422)
-    log "ERROR 422: Validation failed. The payload may be invalid or a ruleset with the same name/target already exists with incompatible settings."
-    log "Full API response printed above — inspect the 'errors' or 'message' fields for the exact cause."
-    ;;
-  *)
-    log "ERROR ${HTTP_STATUS}: Unexpected response. Inspect the response JSON above for details."
-    ;;
-esac
+# If client error 422 show message and exit (but give detailed hint)
+if [ "${HTTP_STATUS}" = "422" ]; then
+  log "ERROR 422: Validation failed. Response printed above. The 'message' and 'errors' fields give the exact reason."
+  # Try to surface 'message' and 'errors' if available
+  if [ -f "${RESP_FILE}" ] && jq -r '.message // empty' "${RESP_FILE}" >/dev/null 2>&1; then
+    log "API message: $(jq -r '.message // empty' "${RESP_FILE}")"
+  fi
+  if [ -f "${RESP_FILE}" ] && jq -r '.errors // empty' "${RESP_FILE}" >/dev/null 2>&1; then
+    log "API errors:"
+    jq -r '.errors' "${RESP_FILE}" || true
+  fi
+  exit 6
+fi
 
-log "Cleanup tmp files and exit with failure (exit code 6)."
-rm -f "${TMP_RESP}" || true
-exit 6
+# For other 4xx/5xx statuses, print helpful note
+if [[ "${HTTP_STATUS}" =~ ^4|5 ]]; then
+  log "ERROR: API returned HTTP ${HTTP_STATUS}. Response printed above."
+  # If 401/403 provide guidance
+  if [ "${HTTP_STATUS}" = "401" ]; then
+    log "401 Unauthorized: token invalid or revoked."
+  elif [ "${HTTP_STATUS}" = "403" ]; then
+    log "403 Forbidden: token lacks permissions or token owner isn't an admin on the target repo."
+  elif [ "${HTTP_STATUS}" = "404" ]; then
+    log "404 Not Found: repo may be misspelled or token lacks access."
+  fi
+  exit 7
+fi
+
+# fallback
+log "Unexpected API response (status: ${HTTP_STATUS}). See response above."
+exit 8
