@@ -1,4 +1,4 @@
-name: Apply Branch Ruleset (Admin)
+name: Apply Branch Protection (Admin)
 
 on:
   workflow_dispatch:
@@ -9,8 +9,12 @@ on:
       repo:
         description: 'Repository name'
         required: true
+      branch:
+        description: 'Branch name (default main)'
+        required: false
+        default: 'main'
       status_check:
-        description: 'Exact PR status check name (optional)'
+        description: 'Exact status check name to require on PRs (optional)'
         required: false
 
 permissions:
@@ -24,13 +28,13 @@ jobs:
       - name: Checkout admin repo
         uses: actions/checkout@v4
 
-      - name: Ensure script is present
+      - name: Ensure script is present & executable
         run: |
           ls -la scripts || true
-          chmod +x ./scripts/apply_ruleset.sh
+          chmod +x ./scripts/apply_classic_protection.sh
 
-      - name: Run apply_ruleset script
+      - name: Apply branch protection
         env:
-          GITHUB_TOKEN: ${{ secrets.ADMIN_PAT }}   # ensure this secret exists in the admin repo
+          GITHUB_TOKEN: ${{ secrets.ADMIN_PAT }}   # admin PAT stored in admin-tools repo secrets
         run: |
-          ./scripts/apply_ruleset.sh "${{ github.event.inputs.owner }}" "${{ github.event.inputs.repo }}" "${{ github.event.inputs.status_check }}"
+          ./scripts/apply_classic_protection.sh "${{ github.event.inputs.owner }}" "${{ github.event.inputs.repo }}" "${{ github.event.inputs.branch }}" "${{ github.event.inputs.status_check }}"
