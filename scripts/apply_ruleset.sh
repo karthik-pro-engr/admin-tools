@@ -125,31 +125,45 @@ PAYLOAD=$(cat <<EOF
   "target": "branch",
   "enforcement": "active",
   "conditions": {
-    "ref_name": { "include": ["refs/heads/main"] }
+    "ref_name": {
+      "include": [
+        "refs/heads/main"
+      ]
+    }
   },
   "bypass_actors": [],
+  "bypass_teams": [],
+  "bypass_users": [],
   "rules": [
-    {
-      "type": "required_pull_request_reviews",
-      "parameters": {
-        "required_approving_review_count": 1,
-        "dismiss_stale_reviews": true,
-        "require_code_owner_reviews": true
-      }
-    },
     {
       "type": "required_status_checks",
       "parameters": {
-        "contexts": ["Build · Unit tests · Lint"],
-        "strict": true
+        "strict": true,
+        "contexts": ["Build · Unit tests · Lint"]
       }
     },
-    { "type": "enforce_admins",         "parameters": {} },
-    { "type": "disable_force_pushes",    "parameters": {} },
-    { "type": "disable_deletions",       "parameters": {} }
+    {
+      "type": "required_pull_request_reviews",
+      "parameters": {
+        "dismiss_stale_reviews": true,
+        "require_code_owner_reviews": true,
+        "required_approving_review_count": 1
+      }
+    },
+    {
+      "type": "allow_force_pushes",
+      "parameters": {
+        "enabled": false
+      }
+    },
+    {
+      "type": "allow_deletions",
+      "parameters": {
+        "enabled": false
+      }
+    }
   ]
 }
-
 
 EOF
 )
