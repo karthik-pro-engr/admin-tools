@@ -55,7 +55,7 @@ repo-root/
 2. Save `apply_ruleset.sh` locally and make it executable:
 
 ```bash
-chmod +x scripts/apply_ruleset.sh
+chmod +x scripts/apply_classic_protection.sh
 ```
 
 3. Export the PAT into your shell session (temporary):
@@ -68,7 +68,7 @@ export GITHUB_TOKEN="$ADMIN_PAT"  # script expects GITHUB_TOKEN variable
 4. Run the script with parameters: `OWNER` `REPO` and the exact status check name (copy from PR checks UI):
 
 ```bash
-./scripts/apply_ruleset.sh karthik-pro-engr architecting-state "Android CI / Build · Unit tests · Lint"
+./scripts/apply_classic_protection.sh karthik-pro-engr architecting-state "Android CI / Build · Unit tests · Lint"
 ```
 
 5. When finished, unset the token from your shell:
